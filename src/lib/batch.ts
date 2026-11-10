@@ -112,12 +112,14 @@ export function drawBanner(
 export async function pdfToImages(
   file: File,
   dpiScale: number,
+  onPage?: (page: number, total: number) => void,
 ): Promise<NamedBlob[]> {
   const data = new Uint8Array(await file.arrayBuffer());
   const doc = await pdfjs.getDocument({ data }).promise;
   const stem = file.name.replace(/\.pdf$/i, "");
   const out: NamedBlob[] = [];
   for (let i = 1; i <= doc.numPages; i++) {
+    onPage?.(i, doc.numPages);
     const page = await doc.getPage(i);
     const viewport = page.getViewport({ scale: dpiScale });
     const canvas = document.createElement("canvas");
@@ -152,14 +154,20 @@ function parseRanges(input: string, total: number): number[] {
   return [...pages].sort((a, b) => a - b);
 }
 
-export async function splitPdf(file: File, ranges: string): Promise<NamedBlob[]> {
+export async function splitPdf(
+  file: File,
+  ranges: string,
+  onPage?: (index: number, total: number) => void,
+): Promise<NamedBlob[]> {
   const bytes = await file.arrayBuffer();
   const src = await PDFDocument.load(bytes);
   const wanted = parseRanges(ranges, src.getPageCount());
   if (!wanted.length) throw new Error("No valid pages in that range");
   const stem = file.name.replace(/\.pdf$/i, "");
   const out: NamedBlob[] = [];
-  for (const page of wanted) {
+  for (let i = 0; i < wanted.length; i++) {
+    const page = wanted[i];
+    onPage?.(i + 1, wanted.length);
     const doc = await PDFDocument.create();
     const [copied] = await doc.copyPages(src, [page - 1]);
     doc.addPage(copied);

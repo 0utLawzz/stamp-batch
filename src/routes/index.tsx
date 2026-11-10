@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Download, ImagePlus, Scissors, Stamp, Type } from "lucide-react";
 import {
   downloadBlob,
@@ -105,6 +105,92 @@ function Field({
 const inputClass =
   "min-h-11 rounded-lg border border-line bg-bg px-3 text-base text-ink outline-none focus:border-primary";
 
+type JobState = {
+  running: boolean;
+  done: number;
+  total: number;
+  label: string;
+  startedAt: number;
+  now: number;
+};
+
+function formatClock(ms: number) {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function useJob() {
+  const [job, setJob] = useState<JobState | null>(null);
+  const stop = useRef(false);
+
+  useEffect(() => {
+    if (!job?.running) return;
+    const id = window.setInterval(() => {
+      setJob((current) => (current?.running ? { ...current, now: Date.now() } : current));
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [job?.running]);
+
+  return {
+    job,
+    stopped: () => stop.current,
+    start(total: number) {
+      stop.current = false;
+      const now = Date.now();
+      setJob({ running: true, done: 0, total, label: "Starting", startedAt: now, now });
+    },
+    tick(done: number, label: string) {
+      setJob((current) =>
+        current ? { ...current, done, label, now: Date.now() } : current,
+      );
+    },
+    end(label: string, done?: number) {
+      setJob((current) =>
+        current
+          ? {
+              ...current,
+              running: false,
+              done: done ?? current.total,
+              label,
+              now: Date.now(),
+            }
+          : current,
+      );
+    },
+    cancel() {
+      stop.current = true;
+    },
+  };
+}
+
+function JobMeter({ job }: { job: JobState | null }) {
+  if (!job) return null;
+  const pct = job.total ? Math.min(100, Math.round((job.done / job.total) * 100)) : 0;
+  const elapsed = job.now - job.startedAt;
+  const rate = job.done > 0 ? elapsed / job.done : 0;
+  const left = job.running && job.done > 0 ? rate * (job.total - job.done) : 0;
+  return (
+    <div className="rounded-xl border border-line bg-bg p-3">
+      <div className="mb-2 flex items-center justify-between gap-3 text-sm text-ink">
+        <span className="truncate">{job.label}</span>
+        <span className="font-mono">{pct}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-line">
+        <div className="h-full bg-stamp" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs text-muted">
+        <span>
+          {job.done} / {job.total}
+        </span>
+        <span>Elapsed {formatClock(elapsed)}</span>
+        <span>{job.running ? `Left about ${formatClock(left)}` : "Finished"}</span>
+      </div>
+    </div>
+  );
+}
+
 function LabelPanel() {
   const [files, setFiles] = useState<File[]>([]);
   const [text, setText] = useState("A-042-027 HIDDEN HILLS HOTEL & RESORTS | C43");
@@ -114,9 +200,11 @@ function LabelPanel() {
   const [fontSize, setFontSize] = useState(28);
   const [padding, setPadding] = useState(12);
   const [margin, setMargin] = useState(16);
+  const [perFile, setPerFile] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [preview, setPreview] = useState<string>("");
+  const work = useJob();
 
   const opts = useMemo(
     () => ({ text, position, bg, color, fontSize, padding, margin }),
@@ -139,20 +227,33 @@ function LabelPanel() {
   async function run() {
     if (!files.length || !text.trim()) return;
     setBusy(true);
+    work.start(files.length);
     try {
+      const lines = perFile.split("\n").map((line) => line.trim()).filter(Boolean);
       const items: NamedBlob[] = [];
       for (let i = 0; i < files.length; i++) {
-        setStatus(`Stamping ${i + 1} of ${files.length}`);
-        const blob = await stampImage(files[i], opts);
+        if (work.stopped()) {
+          work.end("Stopped", i);
+          setStatus(`Stopped after ${i} image(s).`);
+          return;
+        }
+        const label = lines[i] || text;
+        work.tick(i, files[i].name);
+        const blob = await stampImage(files[i], { ...opts, text: label });
         const base = files[i].name.replace(/\.[^.]+$/, "");
         const ext = blob.type === "image/png" ? "png" : "jpg";
         items.push({ name: `labeled_${base}.${ext}`, blob });
+        work.tick(i + 1, files[i].name);
       }
+      work.tick(files.length, "Packing zip");
       if (items.length === 1) downloadBlob(items[0].blob, items[0].name);
       else await zipNamed(items, `labeled_${stampTime()}.zip`);
+      work.end(`Downloaded ${items.length}`);
       setStatus(`Downloaded ${items.length} labeled image${items.length === 1 ? "" : "s"}.`);
     } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Failed");
+      const message = err instanceof Error ? err.message : "Failed";
+      work.end(message);
+      setStatus(message);
     } finally {
       setBusy(false);
     }
@@ -183,7 +284,14 @@ function LabelPanel() {
               onBlur={() => void refreshPreview(files)}
             />
           </Field>
-          <Field label="Corner">
+          <Field label="Different label per image, one line each (optional)">
+            <textarea
+              className={`${inputClass} min-h-20 py-2 font-mono text-sm`}
+              value={perFile}
+              placeholder={"A-042-027 HOTEL | C43\nA-042-028 HOTEL | C44"}
+              onChange={(e) => setPerFile(e.target.value)}
+            />
+          </Field>
             <select
               className={inputClass}
               value={position}
@@ -253,15 +361,27 @@ function LabelPanel() {
               />
             </Field>
           </div>
-          <button
-            type="button"
-            disabled={busy || !files.length}
-            onClick={() => void run()}
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-primary px-5 text-primary-fg disabled:opacity-50"
-          >
-            <Download size={16} />
-            {busy ? "Working…" : files.length > 1 ? "Download labeled zip" : "Download labeled image"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy || !files.length}
+              onClick={() => void run()}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-primary px-5 text-primary-fg disabled:opacity-50"
+            >
+              <Download size={16} />
+              {busy ? "Working…" : files.length > 1 ? "Download labeled zip" : "Download labeled image"}
+            </button>
+            {busy && (
+              <button
+                type="button"
+                onClick={() => work.cancel()}
+                className="inline-flex min-h-12 items-center rounded-full border border-line px-5 text-ink"
+              >
+                Stop
+              </button>
+            )}
+          </div>
+          <JobMeter job={work.job} />
           <p className="text-sm text-muted">{status || `${files.length} image(s) ready.`}</p>
         </div>
         <div className="flex min-h-72 items-center justify-center rounded-xl border border-dashed border-line bg-bg p-3">
