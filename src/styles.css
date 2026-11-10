@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --color-bg: #efe8dc;
+  --color-surface: #fbf7f0;
+  --color-ink: #1c1915;
+  --color-muted: #6d645a;
+  --color-line: #d9d0c3;
+  --color-stamp: #e6b325;
+  --color-stamp-ink: #1a1408;
+  --color-primary: #1f3a34;
+  --color-primary-fg: #f6f1e7;
+  --color-danger: #8f2d2d;
+  --radius: 0.85rem;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+}
