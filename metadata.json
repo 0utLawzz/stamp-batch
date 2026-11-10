@@ -1,0 +1,8 @@
+{
+  "name": "Stamp Batch",
+  "description": "Batch process images and PDFs: stamp yellow labels, convert PDF pages to images, split PDFs, and bulk rename files.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

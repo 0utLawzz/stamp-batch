@@ -9,6 +9,11 @@ export const Route = createRootRoute({
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Stamp Batch" },
+      {
+        name: "description",
+        content:
+          "Batch process images and PDFs: stamp yellow labels, convert PDF pages to images, split PDFs, and bulk rename files.",
+      },
       { name: "theme-color", content: "#1c1915" },
     ],
     links: [
