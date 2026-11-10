@@ -1,8 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Crop,
   Download,
   FileCheck,
+  FileSpreadsheet,
   FileText,
   Filter,
   FlipHorizontal,
@@ -13,6 +18,7 @@ import {
   Layers,
   Maximize2,
   Play,
+  RotateCcw,
   RotateCw,
   Scissors,
   Sparkles,
@@ -20,16 +26,19 @@ import {
   Trash2,
   Type,
   Workflow,
+  X,
   XCircle,
 } from "lucide-react";
 import {
   compileImagesToPdf,
   downloadBlob,
   generateSequence,
+  getPdfInfo,
   pdfToImages,
   processPipelineItem,
   renamed,
   splitPdf,
+  splitPdfToPageImages,
   stampImage,
   stampTime,
   zipNamed,
@@ -168,9 +177,7 @@ function ProgressBar({
             {progress.running && (
               <span className="inline-block h-3 w-3 animate-ping rounded-full bg-stamp" />
             )}
-            <p className="font-semibold text-ink sm:text-base">
-              {progress.title}
-            </p>
+            <p className="font-semibold text-ink sm:text-base">{progress.title}</p>
           </div>
           {progress.currentItem && (
             <p className="truncate font-mono text-xs text-muted sm:text-sm">
@@ -194,7 +201,6 @@ function ProgressBar({
         </div>
       </div>
 
-      {/* Primary progress track */}
       <div className="mt-3 h-3.5 w-full overflow-hidden rounded-full bg-bg shadow-inner">
         <div
           className="h-full rounded-full bg-gradient-to-r from-stamp to-amber-500 transition-all duration-300 ease-out"
@@ -202,7 +208,6 @@ function ProgressBar({
         />
       </div>
 
-      {/* Progress stats */}
       <div className="mt-2.5 flex flex-wrap items-center justify-between gap-y-1 font-mono text-xs text-muted">
         <div className="flex items-center gap-3">
           <span>
@@ -276,6 +281,432 @@ function Field({
 const inputClass =
   "min-h-11 rounded-xl border border-line bg-bg px-3.5 py-2 text-sm text-ink outline-none transition focus:border-primary focus:ring-1 focus:ring-primary";
 
+/**
+ * MODAL: Import Labels from Text / File (.txt, .csv)
+ */
+function ImportLabelsModal({
+  isOpen,
+  onClose,
+  totalItems,
+  onApply,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  totalItems: number;
+  onApply: (labels: string[]) => void;
+}) {
+  const [sourceType, setSourceType] = useState<"paste" | "file">("paste");
+  const [rawText, setRawText] = useState("");
+  const [delimiter, setDelimiter] = useState<"newline" | "comma" | "tab" | "semicolon">("newline");
+  const [trimWhitespace, setTrimWhitespace] = useState(true);
+  const [skipEmpty, setSkipEmpty] = useState(true);
+
+  const parsedLabels = useMemo(() => {
+    let parts: string[] = [];
+    if (delimiter === "newline") {
+      parts = rawText.split(/\r?\n/);
+    } else if (delimiter === "comma") {
+      parts = rawText.split(",");
+    } else if (delimiter === "tab") {
+      parts = rawText.split("\t");
+    } else if (delimiter === "semicolon") {
+      parts = rawText.split(";");
+    }
+
+    if (trimWhitespace) {
+      parts = parts.map((p) => p.trim());
+    }
+    if (skipEmpty) {
+      parts = parts.filter((p) => p.length > 0);
+    }
+    return parts;
+  }, [rawText, delimiter, trimWhitespace, skipEmpty]);
+
+  if (!isOpen) return null;
+
+  async function handleFileUpload(file: File) {
+    const text = await file.text();
+    setRawText(text);
+    if (file.name.endsWith(".csv")) {
+      setDelimiter("comma");
+    } else {
+      setDelimiter("newline");
+    }
+  }
+
+  function handleConfirm() {
+    onApply(parsedLabels);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-3xl border border-line bg-surface p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-line pb-4">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="text-primary" size={20} />
+            <h3 className="text-xl font-bold text-ink">Import Labels from Text / File</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-1 text-muted hover:bg-bg hover:text-ink"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="mt-4 flex-1 space-y-4 overflow-y-auto pr-1">
+          {/* Source Tabs */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSourceType("paste")}
+              className={`rounded-xl border px-4 py-2 text-xs font-semibold ${
+                sourceType === "paste"
+                  ? "border-primary bg-primary text-primary-fg"
+                  : "border-line bg-bg text-ink"
+              }`}
+            >
+              Direct Paste Text
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceType("file")}
+              className={`rounded-xl border px-4 py-2 text-xs font-semibold ${
+                sourceType === "file"
+                  ? "border-primary bg-primary text-primary-fg"
+                  : "border-line bg-bg text-ink"
+              }`}
+            >
+              Upload .txt or .csv File
+            </button>
+          </div>
+
+          {sourceType === "file" ? (
+            <Field label="Choose Text or CSV File">
+              <input
+                type="file"
+                accept=".txt,.csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void handleFileUpload(f);
+                }}
+                className={inputClass}
+              />
+            </Field>
+          ) : (
+            <Field label="Paste text with labels (one per line, or delimited)">
+              <textarea
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
+                placeholder={"IMG-001\nIMG-002\nIMG-003\nOr paste invoice numbers, titles..."}
+                rows={6}
+                className={`${inputClass} font-mono text-xs`}
+              />
+            </Field>
+          )}
+
+          {/* Delimiter & Options */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Field label="Delimiter">
+              <select
+                value={delimiter}
+                onChange={(e) => setDelimiter(e.target.value as "newline" | "comma" | "tab" | "semicolon")}
+                className={inputClass}
+              >
+                <option value="newline">New Line (\n)</option>
+                <option value="comma">Comma (,)</option>
+                <option value="tab">Tab (\t)</option>
+                <option value="semicolon">Semicolon (;)</option>
+              </select>
+            </Field>
+            <label className="flex cursor-pointer items-center gap-2 pt-6 text-xs font-medium text-ink">
+              <input
+                type="checkbox"
+                checked={trimWhitespace}
+                onChange={(e) => setTrimWhitespace(e.target.checked)}
+                className="h-4 w-4 rounded accent-primary"
+              />
+              Trim whitespace
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 pt-6 text-xs font-medium text-ink">
+              <input
+                type="checkbox"
+                checked={skipEmpty}
+                onChange={(e) => setSkipEmpty(e.target.checked)}
+                className="h-4 w-4 rounded accent-primary"
+              />
+              Skip empty lines
+            </label>
+          </div>
+
+          {/* Preview Mapping */}
+          <div className="rounded-xl border border-line bg-bg p-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-ink">
+                Parsed: {parsedLabels.length} labels found
+              </span>
+              <span className="text-muted">Target batch has {totalItems} images</span>
+            </div>
+
+            {parsedLabels.length > 0 ? (
+              <div className="mt-2 max-h-40 space-y-1 overflow-y-auto pr-1 font-mono text-xs">
+                {parsedLabels.slice(0, 15).map((lbl, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between rounded bg-surface px-2 py-1"
+                  >
+                    <span className="text-muted">Image #{idx + 1}</span>
+                    <span className="font-semibold text-primary">{lbl}</span>
+                  </div>
+                ))}
+                {parsedLabels.length > 15 && (
+                  <p className="text-center text-xs text-muted">
+                    ...and {parsedLabels.length - 15} more
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted">
+                No labels parsed yet. Type or paste your list above.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-3 border-t border-line pt-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-line px-4 py-2 text-sm font-semibold text-ink hover:bg-bg"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={parsedLabels.length === 0}
+            onClick={handleConfirm}
+            className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-fg disabled:opacity-40"
+          >
+            <Check size={16} />
+            Apply {parsedLabels.length} Labels to Batch
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * BATCH CROPPING UI COMPONENT
+ * Allows defining a single crop area applied uniformly across all uploaded images.
+ */
+function BatchCropStudio({
+  cropTop,
+  cropRight,
+  cropBottom,
+  cropLeft,
+  onChange,
+  items,
+  selectedIdx,
+  onSelectIdx,
+}: {
+  cropTop: number;
+  cropRight: number;
+  cropBottom: number;
+  cropLeft: number;
+  onChange: (t: number, r: number, b: number, l: number) => void;
+  items: QueueItem[];
+  selectedIdx: number;
+  onSelectIdx: (idx: number) => void;
+}) {
+  const currentItem = items[selectedIdx];
+
+  // Quick Preset Handlers
+  function applyPreset(name: string) {
+    if (name === "reset") {
+      onChange(0, 0, 0, 0);
+    } else if (name === "trim5") {
+      onChange(5, 5, 5, 5);
+    } else if (name === "header10") {
+      onChange(12, 0, 12, 0);
+    } else if (name === "sides10") {
+      onChange(0, 10, 0, 10);
+    } else if (name === "square") {
+      // 1:1 Center Square crop approximate
+      onChange(10, 15, 10, 15);
+    } else if (name === "a4") {
+      // Standard document crop
+      onChange(6, 4, 6, 4);
+    }
+  }
+
+  return (
+    <div className="space-y-4 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <Crop className="text-primary" size={18} />
+            <h4 className="text-base font-bold text-ink">Batch Uniform Cropping Studio</h4>
+          </div>
+          <p className="text-xs text-muted">
+            Define a single crop region below. It will be applied identically across all{" "}
+            <strong>{items.length} images</strong> in the batch.
+          </p>
+        </div>
+        {(cropTop > 0 || cropRight > 0 || cropBottom > 0 || cropLeft > 0) && (
+          <button
+            type="button"
+            onClick={() => applyPreset("reset")}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-danger hover:underline"
+          >
+            <RotateCcw size={12} />
+            Reset to Full Frame (0%)
+          </button>
+        )}
+      </div>
+
+      {/* Quick Presets */}
+      <div>
+        <span className="text-[11px] font-semibold text-ink uppercase tracking-wider">
+          Quick Crop Presets
+        </span>
+        <div className="mt-1.5 flex flex-wrap gap-2">
+          {[
+            { id: "reset", label: "Full Frame (100%)" },
+            { id: "trim5", label: "Scanner Trim (-5% All)" },
+            { id: "header10", label: "Cut Header & Footer (-12% T/B)" },
+            { id: "sides10", label: "Cut Margins (-10% L/R)" },
+            { id: "square", label: "Square Preset (1:1)" },
+            { id: "a4", label: "A4 Document Format" },
+          ].map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => applyPreset(preset.id)}
+              className="rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-medium text-ink hover:border-primary hover:bg-bg"
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Visual Crop Box Overlay on Preview */}
+      <div className="relative mx-auto flex max-h-72 w-full items-center justify-center overflow-hidden rounded-xl border border-line bg-surface p-2 shadow-inner">
+        {currentItem ? (
+          <div className="relative max-h-64 max-w-full">
+            <img
+              src={currentItem.previewUrl}
+              alt="Batch crop target"
+              className="max-h-64 object-contain select-none"
+            />
+            {/* The Visual Crop Boundary & Darkened Mask */}
+            <div
+              className="pointer-events-none absolute border-2 border-dashed border-stamp shadow-xs"
+              style={{
+                top: `${cropTop}%`,
+                right: `${cropRight}%`,
+                bottom: `${cropBottom}%`,
+                left: `${cropLeft}%`,
+                boxShadow: "0 0 0 9999px rgba(0, 0, 0, 0.55)",
+              }}
+            >
+              {/* Corner indicators */}
+              <div className="absolute -top-1 -left-1 h-2.5 w-2.5 bg-stamp" />
+              <div className="absolute -top-1 -right-1 h-2.5 w-2.5 bg-stamp" />
+              <div className="absolute -bottom-1 -left-1 h-2.5 w-2.5 bg-stamp" />
+              <div className="absolute -bottom-1 -right-1 h-2.5 w-2.5 bg-stamp" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] text-white">
+                  Active Crop ({100 - cropLeft - cropRight}% × {100 - cropTop - cropBottom}%)
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 text-center text-xs text-muted">
+            Upload images to view visual crop overlay.
+          </div>
+        )}
+      </div>
+
+      {/* Batch Navigation: Test Defined Crop on other images in queue */}
+      {items.length > 1 && (
+        <div className="flex items-center justify-between border-y border-line/60 py-2">
+          <span className="text-xs text-muted">Verify crop on different pages:</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={selectedIdx <= 0}
+              onClick={() => onSelectIdx(selectedIdx - 1)}
+              className="rounded-md border border-line p-1 text-ink disabled:opacity-40"
+            >
+              <ChevronLeft size={14} />
+            </button>
+            <span className="font-mono text-xs font-semibold text-ink">
+              Page {selectedIdx + 1} of {items.length}
+            </span>
+            <button
+              type="button"
+              disabled={selectedIdx >= items.length - 1}
+              onClick={() => onSelectIdx(selectedIdx + 1)}
+              className="rounded-md border border-line p-1 text-ink disabled:opacity-40"
+            >
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sliders for Margins */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Field label={`Top Margin: ${cropTop}%`}>
+          <input
+            type="range"
+            min={0}
+            max={40}
+            value={cropTop}
+            onChange={(e) => onChange(Number(e.target.value), cropRight, cropBottom, cropLeft)}
+            className="accent-primary"
+          />
+        </Field>
+        <Field label={`Right Margin: ${cropRight}%`}>
+          <input
+            type="range"
+            min={0}
+            max={40}
+            value={cropRight}
+            onChange={(e) => onChange(cropTop, Number(e.target.value), cropBottom, cropLeft)}
+            className="accent-primary"
+          />
+        </Field>
+        <Field label={`Bottom Margin: ${cropBottom}%`}>
+          <input
+            type="range"
+            min={0}
+            max={40}
+            value={cropBottom}
+            onChange={(e) => onChange(cropTop, cropRight, Number(e.target.value), cropLeft)}
+            className="accent-primary"
+          />
+        </Field>
+        <Field label={`Left Margin: ${cropLeft}%`}>
+          <input
+            type="range"
+            min={0}
+            max={40}
+            value={cropLeft}
+            onChange={(e) => onChange(cropTop, cropRight, cropBottom, Number(e.target.value))}
+            className="accent-primary"
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
 function Home() {
   const [tab, setTab] = useState<TabId>("workflow");
 
@@ -293,9 +724,9 @@ function Home() {
             Stamp Batch
           </h1>
           <p className="mt-2.5 max-w-2xl text-base leading-relaxed text-muted">
-            The all-in-one local pipeline desk: Convert PDFs to images, crop, rotate, resize,
-            apply document scan filters, generate sequential labels (e.g. IMG-1, IMG-2), and
-            export directly as ZIP or Combined PDF. No server uploads.
+            The all-in-one local pipeline desk: Convert PDFs to images, uniform batch crop, resize,
+            apply document scan filters, generate sequential labels (e.g. IMG-1, IMG-2), import
+            labels from text, and export directly as ZIP or Combined PDF.
           </p>
         </div>
       </header>
@@ -342,7 +773,7 @@ function Home() {
 }
 
 /**
- * CONNECTED STUDIO WORKFLOW (PDF -> Images -> Crop/Size -> Effects -> Numbering/Labels -> Export)
+ * CONNECTED STUDIO WORKFLOW
  */
 function WorkflowStudioPanel() {
   const [items, setItems] = useState<QueueItem[]>([]);
@@ -385,14 +816,87 @@ function WorkflowStudioPanel() {
   const [opacity, setOpacity] = useState(1);
   const [fontFamily, setFontFamily] = useState<"serif" | "sans" | "mono">("serif");
 
-  // Step 5: Export settings
-  const [exportName, setExportName] = useState(`processed_batch_${stampTime()}`);
-  const [pdfRenderDpi, setPdfRenderDpi] = useState(1.6);
+  // Step 5: Export settings (Hydration safe initial state)
+  const [exportName, setExportName] = useState("processed_batch");
+
+  // Modals & Text Import
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+
+  // Dedicated Multi-Page PDF Auto-Splitter State
+  const [splitPdfFile, setSplitPdfFile] = useState<File | null>(null);
+  const [splitPdfPageCount, setSplitPdfPageCount] = useState<number | null>(null);
+  const [splitPdfRange, setSplitPdfRange] = useState<"all" | "custom">("all");
+  const [splitPdfCustomRange, setSplitPdfCustomRange] = useState("1-10");
+  const [splitPdfQuality, setSplitPdfQuality] = useState(1.6);
+  const [splitPdfLabelMode, setSplitPdfLabelMode] = useState<"seq" | "page" | "stem">("seq");
+  const [splitPdfLoading, setSplitPdfLoading] = useState(false);
+
+  async function handleSelectSplitPdf(file: File) {
+    setSplitPdfFile(file);
+    try {
+      const info = await getPdfInfo(file);
+      setSplitPdfPageCount(info.totalPages);
+      setSplitPdfCustomRange(`1-${info.totalPages}`);
+    } catch (err) {
+      console.error("Failed to read PDF info:", err);
+    }
+  }
+
+  async function runAutoSplitPdfToPipeline() {
+    if (!splitPdfFile) return;
+    setSplitPdfLoading(true);
+    const total = splitPdfPageCount || 1;
+    tracker.start(total, `Auto-Splitting ${splitPdfFile.name} into page images`);
+
+    try {
+      const range = splitPdfRange === "all" ? undefined : splitPdfCustomRange;
+      const pages = await splitPdfToPageImages(splitPdfFile, {
+        dpiScale: splitPdfQuality,
+        pagesRange: range,
+        onProgress: (p, tot, name) => {
+          tracker.tick(p, `Rendering page ${p} of ${tot}`, name, "Extracting page");
+        },
+        shouldStop: () => tracker.isCancelled(),
+      });
+
+      const newItems: QueueItem[] = pages.map((page, idx) => {
+        const itemNumber = items.length + idx + 1;
+        let label = `${prefix}${String(startNum + itemNumber - 1).padStart(padDigits, "0")}${suffix}`;
+        if (splitPdfLabelMode === "page") {
+          label = `Page ${page.pageNumber} of ${page.totalPages}`;
+        } else if (splitPdfLabelMode === "stem") {
+          label = page.name.replace(/\.[^.]+$/, "");
+        }
+        return {
+          id: `${splitPdfFile.name}-page-${page.pageNumber}-${Date.now()}-${idx}`,
+          name: page.name,
+          blob: page.blob,
+          previewUrl: URL.createObjectURL(page.blob),
+          customLabel: label,
+        };
+      });
+
+      setItems((prev) => [...prev, ...newItems]);
+      tracker.finish(`Successfully extracted and split ${newItems.length} pages into the pipeline!`);
+      setSplitPdfFile(null);
+      setSplitPdfPageCount(null);
+      setActiveStep(2); // Auto-advance directly into Step 2: Batch Crop & Size!
+    } catch (err) {
+      tracker.finish(err instanceof Error ? err.message : "PDF split failed");
+    } finally {
+      setSplitPdfLoading(false);
+    }
+  }
 
   // Live preview & Progress
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string>("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const tracker = useProgressTracker();
+
+  // Set export name with client timestamp safely after mount
+  useEffect(() => {
+    setExportName(`processed_batch_${stampTime()}`);
+  }, []);
 
   // Assemble transform options
   const transformOpts: TransformOptions = useMemo(
@@ -461,7 +965,7 @@ function WorkflowStudioPanel() {
     fontFamily,
   ]);
 
-  // Update live preview whenever settings or selected item change
+  // Live preview update
   useEffect(() => {
     const currentItem = items[selectedIdx];
     if (!currentItem) {
@@ -499,7 +1003,7 @@ function WorkflowStudioPanel() {
     };
   }, [items, selectedIdx, transformOpts, labelOpts, stampEnabled]);
 
-  // Handle file uploads (Images or PDFs)
+  // Handle file uploads
   async function handleAddFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
@@ -516,7 +1020,7 @@ function WorkflowStudioPanel() {
           tracker.tick(i, `Extracting pages from PDF`, file.name, "PDF Extraction");
           const pages = await pdfToImages(
             file,
-            pdfRenderDpi,
+            splitPdfQuality,
             (p, total, name) => {
               tracker.tick(i, `Reading ${file.name}: page ${p}/${total}`, name);
             },
@@ -563,6 +1067,16 @@ function WorkflowStudioPanel() {
       prev.map((item, idx) => ({
         ...item,
         customLabel: sequence[idx] || `${prefix}${idx + 1}`,
+      })),
+    );
+  }
+
+  // Apply imported text labels
+  function applyImportedLabels(imported: string[]) {
+    setItems((prev) =>
+      prev.map((item, idx) => ({
+        ...item,
+        customLabel: imported[idx] !== undefined && imported[idx].trim() ? imported[idx] : item.customLabel,
       })),
     );
   }
@@ -661,13 +1175,13 @@ function WorkflowStudioPanel() {
     <Panel
       title="Connected Studio Workflow"
       badge="Step-by-Step Pipeline"
-      description="Start with documents or PDFs, extract images, crop & size, apply enhancements, assign custom or sequential labels (IMG-1, IMG-2), and export to ZIP or a merged PDF."
+      description="Connect PDF extraction, interactive batch cropping, document enhancements, custom labeling/text import, and multi-format exports in one continuous workspace."
     >
       {/* Pipeline Step Navigator */}
       <div className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-5">
         {[
           { num: 1, label: "1. Import Source", icon: Layers },
-          { num: 2, label: "2. Crop & Resize", icon: Scissors },
+          { num: 2, label: "2. Batch Crop & Size", icon: Scissors },
           { num: 3, label: "3. Effects & Scan", icon: Filter },
           { num: 4, label: "4. Number & Label", icon: Hash },
           { num: 5, label: "5. Export & PDF", icon: Download },
@@ -693,231 +1207,292 @@ function WorkflowStudioPanel() {
       </div>
 
       <div className="grid gap-8 lg:grid-cols-12">
-        {/* Left Column: Controls for Active Step */}
+        {/* Left Column */}
         <div className="space-y-6 lg:col-span-7">
           {/* STEP 1: Import Source */}
           {activeStep === 1 && (
-            <div className="space-y-4 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-ink">Source Documents & Images</h3>
-                <span className="rounded-full bg-stamp/20 px-2.5 py-0.5 font-mono text-xs font-bold text-stamp-ink">
-                  {items.length} in queue
-                </span>
-              </div>
-              <p className="text-sm text-muted">
-                Add PDFs (each page will be converted to high-res image) or existing images (PNG,
-                JPG, WebP).
-              </p>
+            <div className="space-y-6">
+              {/* Dedicated Tool: Multi-Page PDF Auto-Splitter */}
+              <div className="space-y-4 rounded-3xl border-2 border-primary/30 bg-primary/5 p-5 shadow-xs sm:p-6">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-primary/15 pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="rounded-xl bg-primary p-2 text-primary-fg shadow-xs">
+                      <FileText size={20} />
+                    </div>
+                    <div>
+                      <h4 className="text-base font-bold text-ink sm:text-lg">
+                        Auto-Split Multi-Page PDF to Page Images
+                      </h4>
+                      <p className="text-xs text-muted">
+                        Automatically extract individual pages as high-resolution images based on page
+                        numbers.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-primary/15 px-3 py-1 font-mono text-xs font-bold text-primary">
+                    PDF Tool
+                  </span>
+                </div>
 
-              <Field label="Upload Files" hint="Accepts PDF, PNG, JPG, WebP">
-                <input
-                  type="file"
-                  multiple
-                  accept="application/pdf,image/png,image/jpeg,image/webp"
-                  className={inputClass}
-                  onChange={(e) => void handleAddFiles(e.target.files)}
-                />
-              </Field>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Field label={`PDF Extraction Quality: ${pdfRenderDpi.toFixed(1)}×`}>
+                <Field label="Choose Multi-Page PDF Document">
                   <input
-                    type="range"
-                    min={1}
-                    max={2.5}
-                    step={0.1}
-                    value={pdfRenderDpi}
-                    onChange={(e) => setPdfRenderDpi(Number(e.target.value))}
-                    className="accent-primary"
+                    type="file"
+                    accept="application/pdf"
+                    className={inputClass}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleSelectSplitPdf(f);
+                    }}
                   />
                 </Field>
-                <div className="flex items-end">
+
+                {splitPdfFile && (
+                  <div className="space-y-3.5 rounded-2xl border border-primary/20 bg-surface p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-ink">
+                          {splitPdfFile.name}
+                        </span>
+                        {splitPdfPageCount && (
+                          <span className="rounded-full bg-stamp px-2.5 py-0.5 font-mono text-xs font-bold text-stamp-ink">
+                            {splitPdfPageCount} Page{splitPdfPageCount === 1 ? "" : "s"} Detected
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <Field label="Pages to Extract">
+                        <select
+                          value={splitPdfRange}
+                          onChange={(e) => setSplitPdfRange(e.target.value as "all" | "custom")}
+                          className={inputClass}
+                        >
+                          <option value="all">
+                            All Pages (1 to {splitPdfPageCount || "N"})
+                          </option>
+                          <option value="custom">Custom Page Range</option>
+                        </select>
+                      </Field>
+
+                      {splitPdfRange === "custom" ? (
+                        <Field label="Page Numbers / Range" hint="e.g. 1-5, 8, 11-12">
+                          <input
+                            type="text"
+                            value={splitPdfCustomRange}
+                            onChange={(e) => setSplitPdfCustomRange(e.target.value)}
+                            placeholder="e.g. 1-4, 7"
+                            className={inputClass}
+                          />
+                        </Field>
+                      ) : (
+                        <Field label="Page Label Format">
+                          <select
+                            value={splitPdfLabelMode}
+                            onChange={(e) => setSplitPdfLabelMode(e.target.value as "seq" | "page" | "stem")}
+                            className={inputClass}
+                          >
+                            <option value="seq">
+                              Sequential Numbers ({prefix}1, {prefix}2, {prefix}3...)
+                            </option>
+                            <option value="page">Page Numbers (Page 1 of {splitPdfPageCount || "N"})</option>
+                            <option value="stem">Original Filename & Page Index</option>
+                          </select>
+                        </Field>
+                      )}
+                    </div>
+
+                    <Field label={`Rendering Sharpness / DPI Quality: ${splitPdfQuality.toFixed(1)}×`}>
+                      <input
+                        type="range"
+                        min={1}
+                        max={2.5}
+                        step={0.1}
+                        value={splitPdfQuality}
+                        onChange={(e) => setSplitPdfQuality(Number(e.target.value))}
+                        className="accent-primary"
+                      />
+                    </Field>
+
+                    <button
+                      type="button"
+                      disabled={splitPdfLoading}
+                      onClick={() => void runAutoSplitPdfToPipeline()}
+                      className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-bold text-primary-fg shadow-sm transition hover:brightness-110 disabled:opacity-50"
+                    >
+                      <Sparkles size={16} />
+                      {splitPdfLoading
+                        ? "Splitting PDF into Individual Images..."
+                        : `⚡ Split PDF into Page Images & Enter Cropping Pipeline`}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Standard Multi-File Uploader for Images or mixed files */}
+              <div className="space-y-4 rounded-3xl border border-line bg-bg/50 p-5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-base font-bold text-ink">
+                    Or Upload Existing Images / Scans
+                  </h4>
+                  <span className="rounded-full bg-stamp/20 px-2.5 py-0.5 font-mono text-xs font-bold text-stamp-ink">
+                    {items.length} in queue
+                  </span>
+                </div>
+                <p className="text-xs text-muted">
+                  Drag and drop individual scans or image files (PNG, JPG, WebP) directly into the
+                  pipeline queue.
+                </p>
+
+                <Field label="Add Image Files">
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/png,image/jpeg,image/webp,application/pdf"
+                    className={inputClass}
+                    onChange={(e) => void handleAddFiles(e.target.files)}
+                  />
+                </Field>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                   {items.length > 0 && (
                     <button
                       type="button"
                       onClick={clearAllItems}
-                      className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-danger/40 px-3 text-xs font-semibold text-danger hover:bg-danger/10"
+                      className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-danger/40 px-3.5 text-xs font-semibold text-danger hover:bg-danger/10"
                     >
-                      <Trash2 size={15} />
-                      Clear Queue
+                      <Trash2 size={14} />
+                      Clear Queue ({items.length})
                     </button>
                   )}
-                </div>
-              </div>
 
-              {/* Quick Jump to Next Step */}
-              <div className="flex justify-end pt-2">
-                <button
-                  type="button"
-                  disabled={items.length === 0}
-                  onClick={() => setActiveStep(2)}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-fg disabled:opacity-40"
-                >
-                  Next: Crop & Resize
-                  <Play size={14} />
-                </button>
+                  <div className="flex-1" />
+
+                  <button
+                    type="button"
+                    disabled={items.length === 0}
+                    onClick={() => setActiveStep(2)}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-fg disabled:opacity-40"
+                  >
+                    Proceed to Batch Crop ({items.length} images)
+                    <Play size={14} />
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
-          {/* STEP 2: Crop, Rotate & Resize */}
+          {/* STEP 2: Batch Crop, Rotate & Resize */}
           {activeStep === 2 && (
-            <div className="space-y-5 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
-              <h3 className="text-lg font-bold text-ink">Crop, Rotate & Dimensions</h3>
+            <div className="space-y-5">
+              {/* Batch Cropping Studio UI Component */}
+              <BatchCropStudio
+                cropTop={cropTop}
+                cropRight={cropRight}
+                cropBottom={cropBottom}
+                cropLeft={cropLeft}
+                onChange={(t, r, b, l) => {
+                  setCropTop(t);
+                  setCropRight(r);
+                  setCropBottom(b);
+                  setCropLeft(l);
+                }}
+                items={items}
+                selectedIdx={selectedIdx}
+                onSelectIdx={setSelectedIdx}
+              />
 
-              {/* Scaling */}
-              <div className="grid grid-cols-2 gap-3">
-                <Field label={`Scale: ${scalePercent}%`}>
-                  <input
-                    type="range"
-                    min={25}
-                    max={200}
-                    step={5}
-                    value={scalePercent}
-                    onChange={(e) => setScalePercent(Number(e.target.value))}
-                    className="accent-primary"
-                  />
-                </Field>
-                <Field label="Max Width Constraint" hint="Optional max pixels">
-                  <input
-                    type="number"
-                    placeholder="e.g. 1920 (no limit)"
-                    value={maxWidth || ""}
-                    onChange={(e) => setMaxWidth(e.target.value ? Number(e.target.value) : undefined)}
-                    className={inputClass}
-                  />
-                </Field>
-              </div>
+              {/* Scaling & Dimensions */}
+              <div className="space-y-4 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
+                <h4 className="text-base font-bold text-ink">Scale & Dimensions</h4>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label={`Scale Factor: ${scalePercent}%`}>
+                    <input
+                      type="range"
+                      min={25}
+                      max={200}
+                      step={5}
+                      value={scalePercent}
+                      onChange={(e) => setScalePercent(Number(e.target.value))}
+                      className="accent-primary"
+                    />
+                  </Field>
+                  <Field label="Max Width Constraint" hint="Optional max pixels">
+                    <input
+                      type="number"
+                      placeholder="e.g. 1920 (no limit)"
+                      value={maxWidth || ""}
+                      onChange={(e) => setMaxWidth(e.target.value ? Number(e.target.value) : undefined)}
+                      className={inputClass}
+                    />
+                  </Field>
+                </div>
 
-              {/* Rotation & Flip */}
-              <div>
-                <span className="text-xs font-semibold text-ink uppercase tracking-wider">
-                  Orientation & Flip
-                </span>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {[0, 90, 180, 270].map((deg) => (
+                {/* Rotation & Flip */}
+                <div>
+                  <span className="text-xs font-semibold text-ink uppercase tracking-wider">
+                    Orientation & Flip
+                  </span>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[0, 90, 180, 270].map((deg) => (
+                      <button
+                        key={deg}
+                        type="button"
+                        onClick={() => setRotate(deg as 0 | 90 | 180 | 270)}
+                        className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold ${
+                          rotate === deg
+                            ? "border-primary bg-primary text-primary-fg"
+                            : "border-line bg-surface text-ink"
+                        }`}
+                      >
+                        <RotateCw size={14} />
+                        {deg}°
+                      </button>
+                    ))}
                     <button
-                      key={deg}
                       type="button"
-                      onClick={() => setRotate(deg as 0 | 90 | 180 | 270)}
+                      onClick={() => setFlipH(!flipH)}
                       className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold ${
-                        rotate === deg
+                        flipH
                           ? "border-primary bg-primary text-primary-fg"
                           : "border-line bg-surface text-ink"
                       }`}
                     >
-                      <RotateCw size={14} />
-                      {deg}°
+                      <FlipHorizontal size={14} />
+                      Flip H
                     </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setFlipH(!flipH)}
-                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold ${
-                      flipH
-                        ? "border-primary bg-primary text-primary-fg"
-                        : "border-line bg-surface text-ink"
-                    }`}
-                  >
-                    <FlipHorizontal size={14} />
-                    Flip H
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFlipV(!flipV)}
-                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold ${
-                      flipV
-                        ? "border-primary bg-primary text-primary-fg"
-                        : "border-line bg-surface text-ink"
-                    }`}
-                  >
-                    <FlipHorizontal size={14} className="rotate-90" />
-                    Flip V
-                  </button>
-                </div>
-              </div>
-
-              {/* Crop Margins */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-ink uppercase tracking-wider">
-                    Crop Margins (% trimmed from edges)
-                  </span>
-                  {(cropTop > 0 || cropRight > 0 || cropBottom > 0 || cropLeft > 0) && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setCropTop(0);
-                        setCropRight(0);
-                        setCropBottom(0);
-                        setCropLeft(0);
-                      }}
-                      className="text-xs font-medium text-danger hover:underline"
+                      onClick={() => setFlipV(!flipV)}
+                      className={`inline-flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold ${
+                        flipV
+                          ? "border-primary bg-primary text-primary-fg"
+                          : "border-line bg-surface text-ink"
+                      }`}
                     >
-                      Reset Crop
+                      <FlipHorizontal size={14} className="rotate-90" />
+                      Flip V
                     </button>
-                  )}
+                  </div>
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <Field label={`Top ${cropTop}%`}>
-                    <input
-                      type="range"
-                      min={0}
-                      max={40}
-                      value={cropTop}
-                      onChange={(e) => setCropTop(Number(e.target.value))}
-                      className="accent-primary"
-                    />
-                  </Field>
-                  <Field label={`Right ${cropRight}%`}>
-                    <input
-                      type="range"
-                      min={0}
-                      max={40}
-                      value={cropRight}
-                      onChange={(e) => setCropRight(Number(e.target.value))}
-                      className="accent-primary"
-                    />
-                  </Field>
-                  <Field label={`Bottom ${cropBottom}%`}>
-                    <input
-                      type="range"
-                      min={0}
-                      max={40}
-                      value={cropBottom}
-                      onChange={(e) => setCropBottom(Number(e.target.value))}
-                      className="accent-primary"
-                    />
-                  </Field>
-                  <Field label={`Left ${cropLeft}%`}>
-                    <input
-                      type="range"
-                      min={0}
-                      max={40}
-                      value={cropLeft}
-                      onChange={(e) => setCropLeft(Number(e.target.value))}
-                      className="accent-primary"
-                    />
-                  </Field>
-                </div>
-              </div>
 
-              <div className="flex justify-between pt-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveStep(1)}
-                  className="rounded-xl border border-line px-4 py-2 text-sm text-ink"
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveStep(3)}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-fg"
-                >
-                  Next: Effects & Filters
-                  <Play size={14} />
-                </button>
+                <div className="flex justify-between pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveStep(1)}
+                    className="rounded-xl border border-line px-4 py-2 text-sm text-ink"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveStep(3)}
+                    className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-primary-fg"
+                  >
+                    Next: Effects & Filters
+                    <Play size={14} />
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -955,7 +1530,6 @@ function WorkflowStudioPanel() {
                 </div>
               </div>
 
-              {/* Brightness & Contrast */}
               <div className="grid grid-cols-2 gap-4">
                 <Field
                   label={`Brightness (${brightness > 0 ? `+${brightness}` : brightness})`}
@@ -985,7 +1559,6 @@ function WorkflowStudioPanel() {
                 </Field>
               </div>
 
-              {/* Border framing */}
               <div className="grid grid-cols-2 gap-4">
                 <Field label={`Frame Border: ${borderWidth}px`}>
                   <input
@@ -1035,14 +1608,14 @@ function WorkflowStudioPanel() {
             </div>
           )}
 
-          {/* STEP 4: Numbering & Labels (IMG-1, IMG-2, etc.) */}
+          {/* STEP 4: Numbering & Labels */}
           {activeStep === 4 && (
             <div className="space-y-5 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-lg font-bold text-ink">Sequential Numbering & Labels</h3>
+                  <h3 className="text-lg font-bold text-ink">Sequential Numbering & Custom Labels</h3>
                   <p className="text-xs text-muted">
-                    Apply sequential tags like IMG-1, IMG-2, or edit labels individually below.
+                    Apply sequential tags like IMG-1, IMG-2, or import labels from a text list.
                   </p>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink">
@@ -1058,14 +1631,35 @@ function WorkflowStudioPanel() {
 
               {stampEnabled && (
                 <>
+                  {/* Action Bar for Label Generation and Import */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-surface p-3">
+                    <span className="text-xs font-bold text-ink">Quick Label Tools:</span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsImportModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-primary bg-primary/10 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/20"
+                      >
+                        <FileSpreadsheet size={14} />
+                        Import from Text / File (.txt, .csv)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={applySequentialLabels}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-stamp px-3 py-1.5 text-xs font-bold text-stamp-ink hover:brightness-105"
+                      >
+                        <Sparkles size={13} />
+                        Regenerate Pattern (IMG-1, IMG-2...)
+                      </button>
+                    </div>
+                  </div>
+
                   {/* Auto-sequence Generator Card */}
                   <div className="rounded-xl border border-stamp/50 bg-stamp/10 p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-1.5 font-mono text-xs font-bold text-stamp-ink uppercase tracking-wide">
-                        <Hash size={14} />
-                        Auto-Sequence Generator (e.g. IMG-1, IMG-2, IMG-3...)
-                      </span>
-                    </div>
+                    <span className="flex items-center gap-1.5 font-mono text-xs font-bold text-stamp-ink uppercase tracking-wide">
+                      <Hash size={14} />
+                      Sequence Pattern Configuration
+                    </span>
 
                     <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                       <Field label="Prefix">
@@ -1104,38 +1698,6 @@ function WorkflowStudioPanel() {
                           className={inputClass}
                         />
                       </Field>
-                    </div>
-
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono text-xs text-muted">
-                        Preview sequence:{" "}
-                        <strong className="text-ink">
-                          {prefix}
-                          {String(startNum).padStart(padDigits, "0")}
-                          {suffix}
-                        </strong>
-                        ,{" "}
-                        <strong className="text-ink">
-                          {prefix}
-                          {String(startNum + 1).padStart(padDigits, "0")}
-                          {suffix}
-                        </strong>
-                        ,{" "}
-                        <strong className="text-ink">
-                          {prefix}
-                          {String(startNum + 2).padStart(padDigits, "0")}
-                          {suffix}
-                        </strong>
-                        ...
-                      </span>
-                      <button
-                        type="button"
-                        onClick={applySequentialLabels}
-                        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-stamp px-3.5 text-xs font-bold text-stamp-ink hover:brightness-105"
-                      >
-                        <Sparkles size={13} />
-                        Apply to All {items.length} Images
-                      </button>
                     </div>
                   </div>
 
@@ -1273,8 +1835,7 @@ function WorkflowStudioPanel() {
             <div className="space-y-5 rounded-2xl border border-line bg-bg/50 p-4 sm:p-5">
               <h3 className="text-lg font-bold text-ink">Export Processed Batch</h3>
               <p className="text-sm text-muted">
-                Choose how you want to download your finished images. All changes (crop, resize,
-                filters, numbering) will be applied.
+                Download your processed batch with uniform crop, size, filters, and labels.
               </p>
 
               <Field label="Batch File Name" hint="Without extension">
@@ -1330,21 +1891,28 @@ function WorkflowStudioPanel() {
             </div>
           )}
 
-          {/* Progress Bar (Always visible while working or when active) */}
+          {/* Progress Bar */}
           <ProgressBar progress={tracker.progress} onCancel={() => tracker.cancel()} />
 
-          {/* Per-Image Individual Label & Preview Selector Card List */}
+          {/* Per-Image Individual Label Card List */}
           <div className="rounded-2xl border border-line bg-surface p-4 shadow-sm">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h4 className="text-sm font-bold text-ink">
                   Queue Items & Per-Image Custom Labels ({items.length})
                 </h4>
                 <p className="text-xs text-muted">
-                  Click an image to preview. Type directly in the input box to assign a unique label
-                  to that specific image.
+                  Type directly in any box to customize that image&apos;s label.
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(true)}
+                className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"
+              >
+                <FileSpreadsheet size={13} />
+                Import from Text
+              </button>
             </div>
 
             {items.length === 0 ? (
@@ -1365,7 +1933,6 @@ function WorkflowStudioPanel() {
                           : "border-line bg-bg hover:border-primary/40"
                       }`}
                     >
-                      {/* Thumbnail with selection */}
                       <button
                         type="button"
                         onClick={() => setSelectedIdx(idx)}
@@ -1381,7 +1948,6 @@ function WorkflowStudioPanel() {
                         </span>
                       </button>
 
-                      {/* File Name & Dimensions */}
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-mono text-xs font-semibold text-ink">
                           {item.name}
@@ -1398,7 +1964,6 @@ function WorkflowStudioPanel() {
                         </div>
                       </div>
 
-                      {/* Actions */}
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
@@ -1488,6 +2053,14 @@ function WorkflowStudioPanel() {
           </div>
         </div>
       </div>
+
+      {/* Import Labels Modal */}
+      <ImportLabelsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        totalItems={items.length}
+        onApply={applyImportedLabels}
+      />
     </Panel>
   );
 }
@@ -1518,9 +2091,9 @@ function LabelPanel() {
   const [busy, setBusy] = useState(false);
   const [previewIdx, setPreviewIdx] = useState(0);
   const [preview, setPreview] = useState<string>("");
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const tracker = useProgressTracker();
 
-  // Multi-line text area sync
   const multiLineText = useMemo(() => labels.join("\n"), [labels]);
 
   const opts: LabelOptions = useMemo(
@@ -1568,7 +2141,6 @@ function LabelPanel() {
 
   function handleFilesChange(newFiles: File[]) {
     setFiles(newFiles);
-    // Initialize labels with sequence if empty
     const seq = generateSequence(newFiles.length, prefix, startNum, padDigits, suffix);
     setLabels(seq);
     setPreviewIdx(0);
@@ -1578,6 +2150,14 @@ function LabelPanel() {
   function applySequence() {
     const seq = generateSequence(files.length, prefix, startNum, padDigits, suffix);
     setLabels(seq);
+    void refreshPreview(files, previewIdx);
+  }
+
+  function applyImported(newLabels: string[]) {
+    const updated = files.map((_, i) =>
+      newLabels[i] !== undefined && newLabels[i].trim() ? newLabels[i] : labels[i] || defaultText,
+    );
+    setLabels(updated);
     void refreshPreview(files, previewIdx);
   }
 
@@ -1638,7 +2218,7 @@ function LabelPanel() {
   return (
     <Panel
       title="Label & Numbering Tool"
-      description="Add corner badges or custom numbering sequences (IMG-1, IMG-2, IMG-3...) with individual text edits for each scan."
+      description="Add corner badges or custom numbering sequences (IMG-1, IMG-2, IMG-3...) with individual text edits and text import for each scan."
     >
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="flex flex-col gap-4">
@@ -1654,10 +2234,21 @@ function LabelPanel() {
 
           {/* Sequential Generator Box */}
           <div className="rounded-xl border border-stamp/50 bg-stamp/10 p-3.5">
-            <span className="flex items-center gap-1.5 font-mono text-xs font-bold text-stamp-ink uppercase">
-              <Hash size={14} />
-              Sequential Numbering Generator (IMG-1, IMG-2...)
-            </span>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5 font-mono text-xs font-bold text-stamp-ink uppercase">
+                <Hash size={14} />
+                Sequential Numbering (IMG-1, IMG-2...)
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(true)}
+                className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline"
+              >
+                <FileSpreadsheet size={13} />
+                Import from Text File
+              </button>
+            </div>
+
             <div className="mt-2.5 grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Field label="Prefix">
                 <input
@@ -1901,7 +2492,6 @@ function LabelPanel() {
             )}
           </div>
 
-          {/* Dedicated Progress Bar */}
           <ProgressBar progress={tracker.progress} onCancel={() => tracker.cancel()} />
         </div>
 
@@ -1927,6 +2517,13 @@ function LabelPanel() {
           </div>
         </div>
       </div>
+
+      <ImportLabelsModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        totalItems={files.length}
+        onApply={applyImported}
+      />
     </Panel>
   );
 }
@@ -2007,7 +2604,6 @@ function PdfImagePanel() {
           {busy ? "Extracting..." : "Download Images ZIP"}
         </button>
 
-        {/* Progress bar */}
         <ProgressBar progress={tracker.progress} onCancel={() => tracker.cancel()} />
       </div>
     </Panel>
@@ -2087,7 +2683,6 @@ function SplitPanel() {
           {busy ? "Splitting..." : "Download Split ZIP"}
         </button>
 
-        {/* Progress bar */}
         <ProgressBar progress={tracker.progress} onCancel={() => tracker.cancel()} />
       </div>
     </Panel>

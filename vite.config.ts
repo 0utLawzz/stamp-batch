@@ -148,13 +148,13 @@ function authPopupPlugin(): Plugin {
 export default defineConfig(({ command, isPreview }) => ({
   server: {
     host: "0.0.0.0",
-    port: 8080,
-    strictPort: true,
+    port: 3000,
+    allowedHosts: true,
   },
   preview: {
-    host: "127.0.0.1",
-    port: 8081,
-    strictPort: true,
+    host: "0.0.0.0",
+    port: 3000,
+    allowedHosts: true,
   },
   resolve: { tsconfigPaths: true },
   plugins: [

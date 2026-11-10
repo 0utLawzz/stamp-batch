@@ -8,16 +8,16 @@ A fast, privacy-first in-browser document processing and batch automation suite.
 
 ### 1. 🔄 Connected Studio Workflow (All-in-One Pipeline)
 A unified, multi-stage pipeline where tools connect seamlessly:
-1. **Source Ingestion**: Load PDF documents (automatic high-DPI page rendering to images) and/or image files (PNG, JPG, WebP) into an interactive queue.
-2. **Crop, Rotate & Dimensions**: Scale percentage, max width constraints, 90°/180°/270° rotation, horizontal & vertical flipping, and edge crop trimming.
+1. **Source Ingestion**: Load PDF documents (automatic high-DPI page rendering to images) and/or image files (PNG, JPG, WebP) into an interactive queue with the dedicated PDF auto-splitter.
+2. **Batch Crop Studio & Dimensions**: Define a unified crop box across your batch with live visual overlay, preset aspect ratios (Full Frame, Scanner Trim -5%, Header/Footer Cut -12%, 1:1 Square, A4), 90°/180°/270° rotation, horizontal/vertical flipping, and scaling constraints.
 3. **Scan Enhancements & Visual Filters**: Clean Scan (high-contrast B&W document binarization), Grayscale, Sepia/Vintage, Invert (Dark Mode scan), Brightness, Contrast, and custom framing borders.
-4. **Sequential Numbering & Stamping**: Auto-sequence generator (e.g., `IMG-1`, `IMG-2`, `IMG-3`), custom prefix/suffix/zero-padding, per-image custom label inputs, live preview, and corner/center positioning.
+4. **Sequential Numbering & Stamping**: Auto-sequence generator (e.g., `IMG-1`, `IMG-2`, `IMG-3`), custom prefix/suffix/zero-padding, per-image custom label inputs, import labels from text/CSV files, live preview, and corner/center positioning.
 5. **Multi-Format Export**: One-click download as a ZIP archive of individual processed images OR compile all transformed pages directly into a merged multi-page PDF!
 
 ### 2. 🏷️ Flexible Labeling & Auto-Sequencing
 - **Sequential Pattern Generator**: Easily generate continuous series like `IMG-1`, `IMG-2`, `IMG-3`, `Scan_001`, or `Page {n}` with custom start index and digit padding.
 - **Individual Per-Image Inputs**: View a thumbnail and file name for every uploaded page/image and type a unique, dedicated label for each one individually.
-- **Multi-Line Bulk Paste**: Paste a list of names/codes (one per line) to instantly map onto corresponding images.
+- **Import from Text or CSV**: Upload or paste multi-line lists of labels with automatic delimiter detection (newline, comma, tab, semicolon) and an interactive mapping table.
 - **Styling**: Solid banner, modern pill, transparent watermark, or subtle shadow with full color, font family (Serif, Sans, Mono), opacity, margin, and padding controls.
 
 ### 3. 📄 PDF to Images

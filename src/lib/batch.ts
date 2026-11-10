@@ -388,6 +388,80 @@ function applyCanvasFilters(
   ctx.putImageData(imgData, 0, 0);
 }
 
+export type SplitPageResult = {
+  pageNumber: number;
+  totalPages: number;
+  name: string;
+  blob: Blob;
+  width: number;
+  height: number;
+};
+
+export async function getPdfInfo(file: File | Blob): Promise<{ totalPages: number }> {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjs.getDocument({ data }).promise;
+  return { totalPages: doc.numPages };
+}
+
+export async function splitPdfToPageImages(
+  file: File | Blob,
+  options?: {
+    dpiScale?: number;
+    pagesRange?: string;
+    namingPattern?: string;
+    onProgress?: (page: number, total: number, name: string) => void;
+    shouldStop?: () => boolean;
+  },
+): Promise<SplitPageResult[]> {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await pdfjs.getDocument({ data }).promise;
+  const stem = (file as File).name ? (file as File).name.replace(/\.pdf$/i, "") : "document";
+  const scale = options?.dpiScale ?? 1.6;
+
+  let wantedPages: number[] = [];
+  if (!options?.pagesRange || options.pagesRange === "all" || !options.pagesRange.trim()) {
+    wantedPages = Array.from({ length: doc.numPages }, (_, i) => i + 1);
+  } else {
+    wantedPages = parseRanges(options.pagesRange, doc.numPages);
+  }
+
+  const results: SplitPageResult[] = [];
+  for (let idx = 0; idx < wantedPages.length; idx++) {
+    if (options?.shouldStop?.()) break;
+    const pageNum = wantedPages[idx];
+    const page = await doc.getPage(pageNum);
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    await page.render({ canvas, viewport }).promise;
+    const blob = await canvasToBlob(canvas, "image/png");
+
+    let formattedName = `${stem}_p${String(pageNum).padStart(3, "0")}.png`;
+    if (options?.namingPattern) {
+      formattedName = options.namingPattern
+        .replace("{n}", String(pageNum))
+        .replace("{p2}", String(pageNum).padStart(2, "0"))
+        .replace("{p3}", String(pageNum).padStart(3, "0"))
+        .replace("{stem}", stem);
+      if (!formattedName.toLowerCase().endsWith(".png")) formattedName += ".png";
+    }
+
+    options?.onProgress?.(idx + 1, wantedPages.length, formattedName);
+
+    results.push({
+      pageNumber: pageNum,
+      totalPages: doc.numPages,
+      name: formattedName,
+      blob,
+      width: canvas.width,
+      height: canvas.height,
+    });
+  }
+
+  return results;
+}
+
 export async function pdfToImages(
   file: File | Blob,
   dpiScale: number,
